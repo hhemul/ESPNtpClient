@@ -1,5 +1,8 @@
 #include "ESPNtpClient.h"
 
+#ifdef MDNS
+#include <ESPmDNS.h>
+#endif
 
 #define DBG_PORT Serial
 
@@ -589,11 +592,33 @@ void NTPClient::s_getTimeloop (void* arg) {
 #endif // ESP32
 }
 
+err_t get_local_ntp_ip_and_port (result &IPAddress) {
+    int n = MDNS.queryService("ntp", "udp");
+    if (n > 0) {
+        DEBUGLOGI ("Found %i NTP services", n);
+        for (int i = 0; i < n; i++) DEBUGLOGI("%i: %s: (%s:%i)", i + 1, MDNS.hostname (i).c_str (), MDNS.IP (i).c_str (), MDNS.port (i));
+        result = MDNS.IP (0);
+        return 1;
+    } else {
+        DEBUGLOGE ("NTP service not found");
+        return 0;
+    }
+}
+
 void NTPClient::getTime () {
     err_t result;
     static uint dnsErrors = 0;
     
-    result = WiFi.hostByName (getNtpServerName (), ntpServerIPAddress);
+    const char* ntpServerName = getNtpServerName ();
+#ifdef MDNS
+    if (strncmp(ntpServerName, "local", SERVER_NAME_LENGTH) === 0) {
+        result = get_local_ntp_ip_and_port (ntpServerIPAddress);
+    } else {
+        result = WiFi.hostByName (ntpServerName, ntpServerIPAddress);
+    }
+#else
+    result = WiFi.hostByName (ntpServerName, ntpServerIPAddress);
+#endif
     if (!result) {
         DEBUGLOGE ("HostByName error");
         dnsErrors++;
@@ -649,7 +674,7 @@ void NTPClient::getTime () {
         }
     }
     if (result == ERR_RTE) {
-        DEBUGLOGE ("Port already used");
+        DEBUGLOGE ("Cannot connect to the specified ip (%s)", ntpAddr.toString ().c_str ());
         if (onSyncEvent) {
             NTPEvent_t event;
             event.event = invalidAddress;
