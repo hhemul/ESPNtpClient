@@ -263,6 +263,7 @@ protected:
     NTPStatus_t status = unsyncd;   ///< @brief Sync status
     char ntpServerName[SERVER_NAME_LENGTH];                         ///< @brief  of NTP server on Internet or LAN
     IPAddress ntpServerIPAddress;   ///< @brief  IP address of NTP server on Internet or LAN
+    uint ntpServerPort;             ///< @brief  Port of NTP server on Internet or LAN (DEFAULT_NTP_PORT by default)
 public:
 #ifdef ESP32
     //bool terminateTasks = false;
@@ -372,6 +373,8 @@ protected:
     bool adjustOffset (timeval* offset);
 
 public:
+    NTPClient (): ntpServerPort (DEFAULT_NTP_PORT) {}
+    
     /**
       * @brief NTP client Class destructor
       */

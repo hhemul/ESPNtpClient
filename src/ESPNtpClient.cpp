@@ -287,7 +287,7 @@ void NTPClient::processPacket (struct pbuf* packet) {
             NTPEvent_t event;
             event.event = responseError;
             event.info.serverAddress = ntpServerIPAddress;
-            event.info.port = DEFAULT_NTP_PORT;
+            event.info.port = ntpServerPort;
             event.info.offset = 0;
             event.info.delay = 0;
             onSyncEvent (event);
@@ -337,7 +337,7 @@ void NTPClient::processPacket (struct pbuf* packet) {
                 DEBUGLOGI ("Status set to SYNCD");
                 event.info.offset = offsetAve / 1000000.0;
                 event.info.serverAddress = ntpServerIPAddress;
-                event.info.port = DEFAULT_NTP_PORT;
+                event.info.port = ntpServerPort;
                 event.info.delay = delay;
                 event.info.dispersion = ntpPacket.dispersion;
                 onSyncEvent (event);
@@ -350,7 +350,7 @@ void NTPClient::processPacket (struct pbuf* packet) {
                 event.info.offset = offsetAve / 1000000.0;
                 event.info.dispersion = ntpPacket.dispersion;
                 event.info.serverAddress = ntpServerIPAddress;
-                event.info.port = DEFAULT_NTP_PORT;
+                event.info.port = ntpServerPort;
                 onSyncEvent (event);
             }
         }
@@ -369,7 +369,7 @@ void NTPClient::processPacket (struct pbuf* packet) {
                 event.info.offset = offsetAve / 1000000.0;
                 event.info.dispersion = ntpPacket.dispersion;
                 event.info.serverAddress = ntpServerIPAddress;
-                event.info.port = DEFAULT_NTP_PORT;
+                event.info.port = ntpServerPort;
                 onSyncEvent (event);
             }
                             
@@ -392,7 +392,7 @@ void NTPClient::processPacket (struct pbuf* packet) {
             NTPEvent_t event;
             event.event = syncError;
             event.info.serverAddress = ntpServerIPAddress;
-            event.info.port = DEFAULT_NTP_PORT;
+            event.info.port = ntpServerPort;
             event.info.offset = (float)tvOffset.tv_sec + (float)tvOffset.tv_usec / 1000000.0;
             onSyncEvent (event);
         }
@@ -446,7 +446,7 @@ void NTPClient::processPacket (struct pbuf* packet) {
         event.info.delay = delay;
         event.info.dispersion = ntpPacket.dispersion;
         event.info.serverAddress = ntpServerIPAddress;
-        event.info.port = DEFAULT_NTP_PORT;
+        event.info.port = ntpServerPort;
         onSyncEvent (event);
     }
 }
@@ -592,12 +592,13 @@ void NTPClient::s_getTimeloop (void* arg) {
 #endif // ESP32
 }
 
-err_t get_local_ntp_ip_and_port (result &IPAddress) {
+err_t NTPClient::get_local_ntp_ip_and_port () {
     int n = MDNS.queryService("ntp", "udp");
     if (n > 0) {
         DEBUGLOGI ("Found %i NTP services", n);
         for (int i = 0; i < n; i++) DEBUGLOGI("%i: %s: (%s:%i)", i + 1, MDNS.hostname (i).c_str (), MDNS.IP (i).c_str (), MDNS.port (i));
-        result = MDNS.IP (0);
+        ntpServerIPAddress = MDNS.IP (0);
+        ntpServerPort = MDNS.port (0);
         return 1;
     } else {
         DEBUGLOGE ("NTP service not found");
@@ -612,7 +613,7 @@ void NTPClient::getTime () {
     const char* ntpServerName = getNtpServerName ();
 #ifdef MDNS
     if (strncmp(ntpServerName, "local", SERVER_NAME_LENGTH) === 0) {
-        result = get_local_ntp_ip_and_port (ntpServerIPAddress);
+        result = get_local_ntp_ip_and_port ();
     } else {
         result = WiFi.hostByName (ntpServerName, ntpServerIPAddress);
     }
@@ -626,7 +627,7 @@ void NTPClient::getTime () {
             NTPEvent_t event;
             event.event = invalidAddress;
             event.info.serverAddress = ntpServerIPAddress;
-            event.info.port = DEFAULT_NTP_PORT;
+            event.info.port = ntpServerPort;
 
             onSyncEvent (event);        
         }
@@ -648,7 +649,7 @@ void NTPClient::getTime () {
             NTPEvent_t event;
             event.event = invalidAddress;
             event.info.serverAddress = ntpServerIPAddress;
-            event.info.port = DEFAULT_NTP_PORT;
+            event.info.port = ntpServerPort;
             onSyncEvent (event);
         }
         return;
@@ -662,14 +663,14 @@ void NTPClient::getTime () {
     ntpAddr.addr = ntpServerIPAddress;
 #endif
     DEBUGLOGI ("NTP server IP address %s", ipaddr_ntoa (&ntpAddr));
-    result = udp_connect (udp, &ntpAddr, DEFAULT_NTP_PORT);
+    result = udp_connect (udp, &ntpAddr, ntpServerPort);
     if (result == ERR_USE) {
         DEBUGLOGE ("Port already used");
         if (onSyncEvent) {
             NTPEvent_t event;
             event.event = invalidPort;
             event.info.serverAddress = ntpServerIPAddress;
-            event.info.port = DEFAULT_NTP_PORT;
+            event.info.port = ntpServerPort;
             onSyncEvent (event);
         }
     }
@@ -679,7 +680,7 @@ void NTPClient::getTime () {
             NTPEvent_t event;
             event.event = invalidAddress;
             event.info.serverAddress = ntpServerIPAddress;
-            event.info.port = DEFAULT_NTP_PORT;
+            event.info.port = ntpServerPort;
             onSyncEvent (event);
         }
     }
@@ -699,7 +700,7 @@ void NTPClient::getTime () {
             NTPEvent_t event;
             event.event = errorSending;
             event.info.serverAddress = ntpServerIPAddress;
-            event.info.port = DEFAULT_NTP_PORT;
+            event.info.port = ntpServerPort;
             onSyncEvent (event);
         }
         return;
@@ -708,7 +709,7 @@ void NTPClient::getTime () {
         NTPEvent_t event;
         event.event = requestSent;
         event.info.serverAddress = ntpServerIPAddress;
-        event.info.port = DEFAULT_NTP_PORT;
+        event.info.port = ntpServerPort;
         onSyncEvent (event);
     }
     //udp_disconnect (udp);
@@ -795,7 +796,7 @@ void ICACHE_RAM_ATTR NTPClient::processRequestTimeout () {
         NTPEvent_t event;
         event.event = noResponse;
         event.info.serverAddress = ntpServerIPAddress;
-        event.info.port = DEFAULT_NTP_PORT;
+        event.info.port = ntpServerPort;
         onSyncEvent (event);
     }
     if (numTimeouts >= DEAULT_NUM_TIMEOUTS) {
