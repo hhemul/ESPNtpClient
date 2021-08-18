@@ -157,6 +157,49 @@ char* dumpNTPPacket (char* data, size_t length, char* buffer, int len) {
     return buffer;
 }
 
+void NTPClient::handleDisconnection(bool isErr) {
+    if (isErr) DEBUGLOGE ("DISCONNECTED");
+    if (udp) {
+        DEBUGLOGI ("Remove UDP connection");
+        udp_disconnect (udp);
+        udp_remove (udp);
+        udp = NULL;
+    }
+    isConnected = false;
+}
+
+bool NTPClient::udpBind() {
+    handleDisconnection(false);
+
+    udp = udp_new ();
+    if (!udp) {
+        DEBUGLOGE ("Failed to create NTP socket");
+        return false;
+    }
+    
+    DEBUGLOGI ("NTP socket created");
+    
+    ip_addr_t localAddress;
+#ifdef ESP32
+    localAddress.u_addr.ip4.addr = WiFi.localIP ();
+    localAddress.type = IPADDR_TYPE_V4;
+    DEBUGLOGI ("Bind UDP port %d to %s", ntpServerPort, IPAddress (localAddress.u_addr.ip4.addr).toString ().c_str ());
+#else
+    localAddress.addr = WiFi.localIP ();
+    DEBUGLOGI ("Bind UDP port %d to %s", ntpServerPort, IPAddress (localAddress.addr).toString ().c_str ());
+#endif
+    result = udp_bind (udp, /*IP_ADDR_ANY*/ &localAddress, ntpServerPort);
+    if (result) {
+        DEBUGLOGE ("Failed to bind to NTP port. %d: %s", result, lwip_strerr (result));
+        handleDisconnection(false);
+        return false;
+    }
+    isConnected = true;
+    
+    udp_recv (udp, &NTPClient::s_recvPacket, this);
+    return true;
+}
+
 bool NTPClient::begin (const char* ntpServerName) {
     err_t result;
     
@@ -166,48 +209,13 @@ bool NTPClient::begin (const char* ntpServerName) {
     }
     DEBUGLOGI ("Got server name");
 
-    if (udp) {
-        DEBUGLOGI ("Remove UDP connection");
-        udp_disconnect (udp);
-        udp_remove (udp);
-        udp = NULL;
-    }
-    
-
-    udp = udp_new ();
-    if (!udp){
-        DEBUGLOGE ("Failed to create NTP socket");
-        return false;
-    }
-    DEBUGLOGI ("NTP socket created");
-    
     if (WiFi.isConnected ()) {
-        ip_addr_t localAddress;
-#ifdef ESP32
-        localAddress.u_addr.ip4.addr = WiFi.localIP ();
-        localAddress.type = IPADDR_TYPE_V4;
-        DEBUGLOGI ("Bind UDP port %d to %s", DEFAULT_NTP_PORT, IPAddress (localAddress.u_addr.ip4.addr).toString ().c_str ());
-#else
-        localAddress.addr = WiFi.localIP ();
-        DEBUGLOGI ("Bind UDP port %d to %s", DEFAULT_NTP_PORT, IPAddress (localAddress.addr).toString ().c_str ());
-#endif
-        result = udp_bind (udp, /*IP_ADDR_ANY*/ &localAddress, DEFAULT_NTP_PORT);
-        if (result) {
-            DEBUGLOGE ("Failed to bind to NTP port. %d: %s", result, lwip_strerr (result));
-            if (udp) {
-                udp_disconnect (udp);
-                udp_remove (udp);
-                udp = NULL;
-            }
-            isConnected = false;
+        if (!udpBind()) {
             actualInterval = shortInterval;
             return false;
-        } else {
-            isConnected = true;
         }
-        
-        udp_recv (udp, &NTPClient::s_recvPacket, this);
     }
+
     lastSyncd.tv_sec = 0;
     lastSyncd.tv_usec = 0;
 
@@ -526,68 +534,21 @@ void NTPClient::s_getTimeloop (void* arg) {
                 if (WiFi.isConnected ()) {
                         self->getTime ();
                 } else {
-                    DEBUGLOGE ("DISCONNECTED");
-                    if (self->udp) {
-                        udp_disconnect (self->udp);
-                        udp_remove (self->udp);
-                        self->udp = NULL;
-                    }
-                    self->isConnected = false;
+                    self->handleDisconnection(true);
                 }
             } else {
                 if (WiFi.isConnected ()) {
                     DEBUGLOGD ("CONNECTED. Binding");
-                    if (self->udp) {
-                        udp_disconnect (self->udp);
-                        udp_remove (self->udp);
-                        self->udp = NULL;
-                    }
-
-                    self->udp = udp_new ();
-                    if (!self->udp) {
-                        DEBUGLOGE ("Failed to create NTP socket");
-                        return; // false;
-                    }
-
-                    ip_addr_t localAddress;
-#ifdef ESP32
-                    localAddress.u_addr.ip4.addr = WiFi.localIP ();
-                    localAddress.type = IPADDR_TYPE_V4;
-#else // ESP8266
-                    localAddress.addr = WiFi.localIP ();
-#endif // ESP32
-                    err_t result = udp_bind (self->udp, /*IP_ADDR_ANY*/ &localAddress, DEFAULT_NTP_PORT);
-                    DEBUGLOGI ("Bind UDP port");
-                    if (result) {
-                        DEBUGLOGE ("Failed to bind to NTP port. %d: %s", result, lwip_strerr (result));
-                        if (self->udp) {
-                            udp_disconnect (self->udp);
-                            udp_remove (self->udp);
-                            self->udp = NULL;
-                        }
-
-                        self->isConnected = false;
-                        //return; //false;
-                    } else {
-                        self->isConnected = true;
-                    }
-
-                    udp_recv (self->udp, &NTPClient::s_recvPacket, self);
-                    self->getTime ();
+                    if (self->udpBind()) self->getTime ();
                 }
             }
         }
 #ifdef ESP32
-
         const TickType_t xDelay = 100 / portTICK_PERIOD_MS;
         vTaskDelay (xDelay);
     }
     // DEBUGLOGW ("About to terminate loop task. Handle %p", self->loopHandle);
-    // if (self->udp) {
-    //     DEBUGLOGW ("Deleted UDP connection");
-    //     udp_disconnect (self->udp);
-    //     udp_remove (self->udp);
-    // }
+    // handleDisconnection(false);
     // DEBUGLOGW ("loop task terminated. Handle %p", self->loopHandle);
 #endif // ESP32
 }
@@ -712,8 +673,6 @@ void NTPClient::getTime () {
         event.info.port = ntpServerPort;
         onSyncEvent (event);
     }
-    //udp_disconnect (udp);
-    
 }
 
 boolean NTPClient::sendNTPpacket () {
